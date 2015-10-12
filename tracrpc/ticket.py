@@ -65,6 +65,8 @@ class TicketRPC(Component):
                self.putAttachment)
         yield (None, ((bool, int, str),), self.deleteAttachment)
         yield ('TICKET_VIEW', ((list,),), self.getTicketFields)
+        yield (None, ((list, int, str, int, str, datetime)),
+                      self.modify_comment)
 
     # Exported methods
     def query(self, req, qstr='status!=closed'):
@@ -181,6 +183,37 @@ class TicketRPC(Component):
                 self.log.exception("Failure sending notification on creation "
                                    "of ticket #%s: %s" % (t.id, e))
         return t.id
+
+    def modify_comment(self, req, id, comment, cnum, author='', when=None):
+        """
+        Modify ticket's comment
+        :param req:
+        :param id:
+        :param comment:
+        :param cnum:
+        :return:
+        """
+        ticket = model.Ticket(self.env, id)
+        # custom author?
+        if author and not (req.authname == 'anonymous' \
+                            or 'TICKET_ADMIN' in req.perm(ticket.resource)):
+            # only allow custom author if anonymous is permitted or user is admin
+            self.log.warn("RPC ticket.update: %r not allowed to change author "
+                          "to %r for comment on #%d", req.authname, author, id)
+            author = ''
+        author = author or req.authname
+        # custom change timestamp?
+        if when and not 'TICKET_ADMIN' in req.perm(ticket.resource):
+            self.log.warn("RPC ticket.update: %r not allowed to update #%d with "
+                    "non-current timestamp (%r)", author, id, when)
+            when = None
+        when = when or to_datetime(None, utc)
+        change = ticket.get_change(cnum)
+        if not (req.authname and req.authname != 'anonymous' and
+                change and change['author'] == req.authname):
+            req.perm(ticket.resource).require('TICKET_EDIT_COMMENT')
+        ticket.modify_comment(change['date'], author, comment, when)
+        return ticket.get_change(cnum)
 
     def update(self, req, id, comment, attributes={}, notify=False, author='', when=None):
         """ Update a ticket, returning the new ticket in the same form as
